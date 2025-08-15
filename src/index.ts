@@ -1,0 +1,1 @@
+export { GodotView } from './GodotView';

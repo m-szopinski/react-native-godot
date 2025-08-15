@@ -1,0 +1,96 @@
+name: Build Godot XCFramework
+
+on:
+  push:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout Godot source
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: 4.3-stable
+          path: godot
+
+      - name: Cache Homebrew
+        uses: actions/cache@v3
+        with:
+          path: /opt/homebrew/Cellar
+          key: ${{ runner.os }}-homebrew-${{ hashFiles('**/Brewfile') }}
+          restore-keys: |
+            ${{ runner.os }}-homebrew-
+
+      - name: Cache Python venv
+        uses: actions/cache@v3
+        with:
+          path: godot-build-venv
+          key: ${{ runner.os }}-python-venv-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-python-venv-
+
+      - name: Cache Godot build
+        uses: actions/cache@v3
+        with:
+          path: godot/bin
+          key: ${{ runner.os }}-godot-build-${{ hashFiles('godot/SConstruct') }}
+          restore-keys: |
+            ${{ runner.os }}-godot-build-
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv godot-build-venv
+          source godot-build-venv/bin/activate
+          brew install scons
+          python3 -m pip install --upgrade pip
+
+      - name: Build iOS (arm64)
+        run: |
+          cd godot
+          scons platform=ios arch=arm64 target=template_release
+
+      - name: Build iOS (x86_64 simulator)
+        run: |
+          cd godot
+          scons platform=ios arch=x86_64 target=template_release
+
+      - name: Build macOS (arm64)
+        run: |
+          cd godot
+          scons platform=macos arch=arm64 target=template_release
+
+      - name: Build macOS (x86_64)
+        run: |
+          cd godot
+          scons platform=macos arch=x86_64 target=template_release
+
+      - name: Create XCFramework
+        run: |
+          mkdir -p output
+          xcodebuild -create-xcframework \
+          -library bin/libgodot_ios.arm64.template_release.a \
+          -library bin/libgodot_ios.x86_64.template_release.a \
+          -library bin/libgodot_macos.arm64.template_release.a \
+          -library bin/libgodot_macos.x86_64.template_release.a \
+          -output output/Godot.xcframework
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Godot-xcframework
+          path: output/Godot.xcframework
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: output/Godot.xcframework
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

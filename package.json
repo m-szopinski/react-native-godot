@@ -1,0 +1,50 @@
+{
+  "name": "react-native-godot",
+  "version": "0.0.1",
+  "description": "React Native macOS component wrapping Godot",
+  "main": "src/index.ts",
+  "types": "src/index.d.ts",
+  "podspec": "RNGodot.podspec",
+  "license": "MIT",
+  "author": "m-szopinski",
+  "files": [
+    "src",
+    "ios/Godot.framework"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src --ext .ts,.tsx",
+    "prepare": "npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18.2.0",
+    "react-native": ">=0.76.0"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-native": "^0.76.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.1.6",
+    "@types/react": "^18.2.0",
+    "eslint": "^8.49.0",
+    "eslint-config-prettier": "^9.0.0",
+    "prettier": "^3.0.0"
+  },
+  "react-native": {
+    "macos": {
+      "project": "ios/react-native-godot.xcodeproj"
+    }
+  },
+  "keywords": [
+    "react-native",
+    "macos",
+    "godot",
+    "3d",
+    "component"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/m-szopinski/react-native-godot"
+  }
+}
