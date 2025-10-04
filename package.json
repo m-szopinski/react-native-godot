@@ -1,21 +1,16 @@
 {
   "name": "@m-szopinski/react-native-godot",
-  "version": "0.4.5",
-  "description": "React Native macOS/iOS wrapper with bundled Godot runtime (auto RealGodotEngine).",
+  "version": "0.5.1",
+  "description": "React Native / Web wrapper dla webowego buildu Godot (bez natywnego runtime).",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "files": [
     "lib",
     "src",
-    "ios",
-    "godot-project",
-    "RNGodot.podspec",
-    "godot_embed.example.mm",
-    "README.md",
-    "GodotRuntimeDist"
+    "web-export",
+    "README.md"
   ],
-  "podspec": "RNGodot.podspec",
   "license": "MIT",
   "author": "m-szopinski",
   "scripts": {
@@ -25,7 +20,8 @@
   },
   "peerDependencies": {
     "react": ">=18.2.0",
-    "react-native": ">=0.76.0"
+    "react-native": ">=0.76.0",
+    "react-native-webview": ">=13.0.0"
   },
   "devDependencies": {
     "typescript": "^5.1.6",
@@ -33,9 +29,5 @@
     "eslint": "^8.49.0",
     "eslint-config-prettier": "^9.0.0",
     "prettier": "^3.0.0"
-  },
-  "react-native": {
-    "ios": { "project": "ios/react-native-godot.xcodeproj" },
-    "macos": { "project": "ios/react-native-godot.xcodeproj" }
   }
 }

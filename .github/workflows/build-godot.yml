@@ -1,4 +1,4 @@
-name: Build & Publish (Godot runtime + npm)
+name: Publish (web-only)
 
 on:
   push:
@@ -6,228 +6,45 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-engine:
-    runs-on: macos-latest
-    timeout-minutes: 120
+  publish:
+    runs-on: ubuntu-latest
     env:
       GODOT_VERSION: 4.2.2
-      SCONS_CACHE: ${{ github.workspace }}/.scons_cache
-      SCONS_CACHE_LIMIT: 4096
-      SCONS_BASE_FLAGS: target=template_release tools=no use_lto=yes builtin_moltenvk=yes build_library=yes
-    steps:
-      - name: Checkout (repo)
-        uses: actions/checkout@v4
-
-      - name: Checkout Godot source
-        uses: actions/checkout@v4
-        with:
-          repository: godotengine/godot
-          ref: 4.2.2-stable
-          path: godot
-
-      - name: Cache SCons
-        uses: actions/cache@v4
-        with:
-          path: .scons_cache
-          key: scons-${{ env.GODOT_VERSION }}-${{ runner.os }}-${{ hashFiles('godot/SConstruct') }}
-          restore-keys: |
-            scons-${{ env.GODOT_VERSION }}-${{ runner.os }}-
-
-      - name: Install build deps + minimal Vulkan headers
-        run: |
-          python3 -m venv godot-build-venv
-          source godot-build-venv/bin/activate
-          brew install scons pkg-config molten-vk vulkan-headers
-          python3 -m pip install --upgrade pip
-          echo "CPUS=$(sysctl -n hw.ncpu)" >> $GITHUB_ENV
-          VH_PREFIX="$(brew --prefix vulkan-headers)"
-          SDK_DIR="$PWD/vulkan-sdk"
-          mkdir -p "$SDK_DIR/include/vulkan"
-          cp -R "$VH_PREFIX/include/vulkan/"* "$SDK_DIR/include/vulkan/"
-          echo "VULKAN_SDK=$SDK_DIR" >> $GITHUB_ENV
-          ls -1 "$SDK_DIR/include/vulkan" | head
-
-      - name: Build macOS (arm64)
-        run: |
-          cd godot
-          scons platform=macos arch=arm64 $SCONS_BASE_FLAGS vulkan_sdk_path=$VULKAN_SDK cache_path=${{ env.SCONS_CACHE }} -j $CPUS
-
-      - name: Build iOS (device arm64)
-        run: |
-          cd godot
-          scons platform=ios arch=arm64 ios_simulator=no $SCONS_BASE_FLAGS vulkan_sdk_path=$VULKAN_SDK cache_path=${{ env.SCONS_CACHE }} -j $CPUS
-
-      - name: List produced binaries
-        run: |
-          echo "--- godot/bin ---"
-          find godot/bin -maxdepth 1 -type f -print | sort
-
-      - name: Inject RN runtime bridge (real bootstrap wrappers)
-        run: |
-          cat > godot/main/rn_react_native_bridge.cpp <<'EOF'
-          // React Native bridge: eksport minimalnych funkcji bootstrapu Godot.
-          // Kompilowane razem z silnikiem (build_library=yes). MIT (podlega licencji Godot).
-          #include "main/main.h"
-          #include "scene/main/scene_tree.h"
-          #include "servers/display_server.h"
-          #include "core/config/project_settings.h"
-          #include "core/os/os.h"
-          #include "core/string/ustring.h"
-          #include "core/object/ref_counted.h"
-
-          extern "C" {
-          static bool rg_started = false;
-
-          int rg_main_setup(const char *project_dir) {
-              if (rg_started) return 0;
-              const char *argv_raw[6];
-              int argc = 0;
-              argv_raw[argc++] = "godot";
-              if (project_dir && project_dir[0]) {
-                  argv_raw[argc++] = "--path";
-                  argv_raw[argc++] = project_dir;
-              }
-              // Możesz tu dodać dodatkowe flagi (np. --rendering-driver metal)
-              int rc = Main::setup(argv_raw[0], argc, (char **)argv_raw, false);
-              if (rc) return rc;
-              rc = Main::start(); // tworzy SceneTree itp.
-              if (rc) return rc;
-              rg_started = true;
-              return 0;
-          }
-
-          void rg_main_iteration() {
-              if (!rg_started) return;
-              Main::iteration();
-          }
-
-          void rg_main_finalize() {
-              if (!rg_started) return;
-              Main::finalize();
-              rg_started = false;
-          }
-
-          void rg_set_metal_layer(void *layer) {
-              // Przekazanie natywnej warstwy (Metal) – Godot może ją wykorzystać jeśli obsługuje.
-              DisplayServer *ds = DisplayServer::get_singleton();
-              if (ds && layer) {
-                  // WINDOW_HANDLE = 0 (enum), MAIN_WINDOW_ID = 0 – stabilne w 4.x
-                  ds->window_set_native_handle(DisplayServer::WINDOW_HANDLE, layer, DisplayServer::MAIN_WINDOW_ID);
-              }
-          }
-
-          void rg_request_change_scene(const char *res_path) {
-              if (!rg_started || !res_path) return;
-              SceneTree *st = SceneTree::get_singleton();
-              if (st) {
-                  st->change_scene_to_file(String::utf8(res_path));
-              }
-          }
-
-          void rg_request_event(const char *evt) {
-              // Hook na własne zdarzenia – możesz wdrożyć singleton / autoload i przekazać tu event.
-              (void)evt;
-          }
-          } // extern "C"
-          EOF
-
-      - name: Package runtime
-        run: |
-          set -e
-          mkdir -p GodotRuntime/macos GodotRuntime/ios/device GodotRuntime/include
-          # Fallback detekcja macOS
-          MAC_LIB=$(ls godot/bin/libgodot.macos.*arm64.a 2>/dev/null | head -1 || true)
-          if [ -z "$MAC_LIB" ]; then
-            echo "[INFO] Nie znaleziono statycznej libgodot macOS arm64 – sprawdzam template executable."
-            MAC_BIN=$(ls godot/bin/godot.macos.template_release.arm64 2>/dev/null | head -1 || true)
-            if [ -z "$MAC_BIN" ]; then
-              echo "Brak macOS artefaktów (ani libgodot*.a ani godot.*)."
-              find godot/bin -maxdepth 1 -type f -print
-              exit 1
-            fi
-            cp "$MAC_BIN" GodotRuntime/macos/godot_macos_arm64.template
-            MAC_KIND="executable_template"
-            MAC_SRC=$(basename "$MAC_BIN")
-          else
-            cp "$MAC_LIB" GodotRuntime/macos/libgodot_macos_arm64.a
-            MAC_KIND="static_lib"
-            MAC_SRC=$(basename "$MAC_LIB")
-          fi
-          IOS_LIB=$(ls godot/bin/libgodot.ios.*arm64.a 2>/dev/null | head -1 || true)
-          if [ -z "$IOS_LIB" ]; then
-            echo "Nie znaleziono libgodot iOS arm64."
-            find godot/bin -maxdepth 1 -type f -print
-            exit 1
-          fi
-          cp "$IOS_LIB" GodotRuntime/ios/device/libgodot_ios_arm64.a
-          {
-            echo 'Prebuilt Godot artifacts (template_release, builtin_moltenvk=yes) – macOS arm64 & iOS arm64.'
-            echo "Version: ${GODOT_VERSION}-stable"
-            echo "macOS artifact kind: ${MAC_KIND}"
-            echo "macOS source: ${MAC_SRC}"
-            echo "iOS source: $(basename "$IOS_LIB")"
-            echo 'Brak x86_64 / simulator w tym buildzie.'
-            echo 'Uwaga: jeśli macOS dostarcza executable_template, a potrzebujesz static .a – zbuduj lokalnie lub dostosuj SCons (brak wsparcia w CI).'
-            echo 'Source: https://github.com/godotengine/godot (MIT)'
-            echo 'Included only in published package (not committed).'
-          } > GodotRuntime/include/GodotRuntimeREADME.txt
-          {
-            echo '#include <stddef.h>'
-            echo '#ifdef __cplusplus'; echo 'extern "C" {'; echo '#endif'
-            echo 'void rn_godot_initialize(const char *p) { (void)p; }'
-            echo 'void rn_godot_change_scene(const char *s) { (void)s; }'
-            echo 'void rn_godot_send_event(const char *e) { (void)e; }'
-            echo 'void *rn_godot_get_view(void) { return NULL; }'
-            echo 'void rn_godot_frame(void) { }'
-            echo '#ifdef __cplusplus'; echo '}'; echo '#endif'
-          } > GodotRuntime/rn_godot_wrapper.c
-          echo "Zapakowane artefakty:"
-          find GodotRuntime -type f -maxdepth 3 -print
-
-      - name: Upload runtime artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: GodotRuntime
-          path: GodotRuntime
-          retention-days: 14
-
-  publish-npm:
-    needs: build-engine
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Download runtime artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: GodotRuntime
-          path: GodotRuntime
-      - name: Verify runtime artifact
-        run: |
-          # Akceptujemy lib lub executable template
-          if [ ! -f GodotRuntime/macos/libgodot_macos_arm64.a ] && [ ! -f GodotRuntime/macos/godot_macos_arm64.template ]; then
-            echo "Brak macOS artefaktu (ani libgodot_macos_arm64.a ani godot_macos_arm64.template)"; exit 1;
-          fi
-          test -f GodotRuntime/ios/device/libgodot_ios_arm64.a || (echo "Missing iOS arm64 lib" && exit 1)
-          grep -q rn_godot_initialize GodotRuntime/rn_godot_wrapper.c || (echo "Wrapper missing symbols" && exit 1)
+      # NOTE: Native embed files (godot_embed.example.mm / Swift) removed – pure Web export.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://npm.pkg.github.com
+      - name: Download Godot (headless + templates)
+        run: |
+          set -e
+          BASE="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          BIN="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          TPL="Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          mkdir -p godot-dl
+          curl -L --fail "$BASE/$BIN" -o godot-dl/$BIN
+          curl -L --fail "$BASE/$TPL" -o godot-dl/$TPL
+          unzip -q godot-dl/$BIN -d godot-dl/bin
+          unzip -q godot-dl/$TPL -d godot-dl/tpl
+          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          cp godot-dl/tpl/templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/ || true
+          chmod +x godot-dl/bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64
+      - name: Export Web
+        run: |
+          set -e
+          test -f godot-project/project.godot
+          mkdir -p web-export
+          (cd godot-project && ../godot-dl/bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64 --headless --export-release "Web" ../web-export/index.html)
+          test -f web-export/index.html
       - name: Install deps
         run: npm ci
-      - name: Inject runtime into package dir
-        run: |
-          mkdir -p GodotRuntimeDist
-          rsync -a GodotRuntime/ GodotRuntimeDist/
-          find GodotRuntimeDist -maxdepth 3 -type f -print
-      - name: Build (tsc)
+      - name: Build
         run: npm run build
-      - name: Pack preview
+      - name: Pack (dry-run)
         run: npm pack --dry-run
       - name: Publish
         run: npm publish
