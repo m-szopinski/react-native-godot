@@ -9,7 +9,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      GODOT_VERSION: 4.5.1
+      GODOT_VERSION: 4.5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,4 +49,4 @@ jobs:
       - name: Publish
         run: npm publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_GH_TOKEN }}

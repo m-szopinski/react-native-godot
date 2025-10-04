@@ -1,212 +1,242 @@
-# react-native-godot (macOS / iOS)
+# @m-szopinski/react-native-godot (web export wrapper)
 
-Po instalacji paczki silnik (RealGodotEngine) jest aktywny automatycznie – wrapper `rn_godot_*` dostarczony jako strong implementacje, a `godot_embed.example.mm` zwraca gotowy widok renderera (placeholder + pętla koloru, który możesz zastąpić pełnym renderem Godota gdy rozszerzysz integrację).
+Minimal React / React Native wrapper for a Godot (4.x) Web export.  
+No native Godot runtime (no `RealGodotEngine`, no `rn_godot_*`, no `.mm` files).  
+Rendering always goes through:
+- Web (react-native-web): `<iframe src="web-export/index.html" />`
+- iOS / Android: `WebView` (from `react-native-webview`) loading the packaged `index.html`.
 
-## Quick Start
+## Installation
 
 ```bash
-npm install @m-szopinski/react-native-godot
-(cd ios && pod install)
+npm install @m-szopinski/react-native-godot react-native-webview
+# or
+yarn add @m-szopinski/react-native-godot react-native-webview
 ```
 
-JS:
+(Using Expo and missing WebView? Run: `npx expo install react-native-webview`)
+
+## Basic usage
+
 ```tsx
-<GodotView style={{flex:1}}
-  projectPath="godot-project"
-  mainScene="res://scenes/TestScene.tscn" />
+import { GodotView } from '@m-szopinski/react-native-godot';
+
+export function GameScreen() {
+  return <GodotView style={{ flex: 1 }} onReady={() => console.log('Godot ready')} />;
+}
 ```
 
-Silnik startuje, symbole `rn_godot_*` dostępne (link-time), `RealGodotEngine` tworzony automatycznie.
+That’s it – the component always points to `web-export/index.html` inside the package.
 
-## Integracja (React Native + CocoaPods)
+## Package layout
 
-1. `npm install @m-szopinski/react-native-godot`
-2. `cd ios && pod install`
-3. Otwórz `.xcworkspace` w Xcode.
-4. W Pods -> Development Pods widoczny `RNGodot` (z katalogiem `GodotRuntimeDist` zawierającym prebuilt `libgodot_*.a` lub template).
-5. Uruchom aplikację (iOS / macOS Catalyst / macOS RN) – zobaczysz placeholder animujący kolor.
-6. Aby dodać własny runtime / rendering:
-   - `cp node_modules/@m-szopinski/react-native-godot/godot_embed.example.mm ios/godot_embed.mm`
-   - Dodaj `godot_embed.mm` do targetu (Objective-C++).
-   - W `godot_embed.mm` wdroż realne: inicjalizację Godot, zwrot widoku (`UIView*/NSView*`), opcjonalną pętlę (`rn_godot_frame`).
-7. (Opcjonalnie) Zbuduj własne biblioteki (sekcja “Własny build runtime”) i podmień `GodotRuntimeDist`.
-8. Jeśli linker zgłasza brak `rn_godot_*`: upewnij się, że nie usunięto `rn_godot_wrapper.c` (lub że Twój `godot_embed.mm` wystawia symbole).
-
-Debug skróty:
-- Brak widoku: `rn_godot_get_view` zwraca `NULL`.
-- Lista oczekiwanych symboli: `ref.current?.diagnoseStub()`.
-
-## FAQ (integracja)
-
-- Czy muszę ustawiać Header Search Paths? Nie.
-- Czy potrzebne `-ObjC`? Zwykle nie (tylko gdy dodasz kategorie ObjC).
-- Czy potrzebny bridging header? Nie – Swift + jeden `.mm` z C API wystarcza.
-- Jak dodać własne funkcje? Dodaj w `godot_embed.mm` jako `extern "C"` i wywołuj przez dlsym lub eksportuj bezpośrednio.
-- Co jeśli `rn_godot_get_view` zwraca nil? Upewnij się, że inicjalizacja silnika wykonała się przed pierwszym pobraniem widoku.
-- Czy muszę mieć projekt Godot w bundle? Nie – możesz podać ścieżkę do `.pck` lub zostawić null (stub / własna logika).
-
-## Minimalny kontrakt symboli
-
-```c
-void rn_godot_initialize(const char *project_or_pck);
-void rn_godot_change_scene(const char *res_scene);
-void rn_godot_send_event(const char *evt);
-void *rn_godot_get_view(void); // UIView*/NSView*
-void rn_godot_frame(void);     // opcjonalne
+```
+node_modules/@m-szopinski/react-native-godot/
+ ├─ lib/         # compiled JS/TS output
+ ├─ src/         # sources
+ ├─ web-export/  # Godot build (index.html + .js/.wasm/.pck)
+ └─ README.md
 ```
 
-## Własny build runtime (skrót)
+## iOS (Xcode) – adding resources
 
-1. Ustaw `VULKAN_SDK`.
-2. `./build-godot.sh`
-3. Podmień `GodotRuntimeDist`.
-4. Przebuduj aplikację.
+The WebView must see `web-export/index.html` inside the app bundle.
 
-## Rozszerzenie do pełnego renderu Godot
+Option A – manual folder reference:
+1. In Xcode: Add Files to "<Your Target>" → select `node_modules/@m-szopinski/react-native-godot/web-export` (check "Copy if needed", choose "Create folder references").
+2. Confirm it appears under Build Phases → Copy Bundle Resources.
+3. Run the app – `GodotView` should load.
 
-Obecny wrapper dołącza minimalny placeholder (`godot_embed.example.mm`). Aby uzyskać prawdziwy rendering (Metal / GL) wykonaj poniższe kroki.
+Option B – Run Script Phase:
+Add a Run Script Phase before “Compile Sources”:
 
-### 1. Kopiowanie i dodanie pliku
 ```bash
-cp node_modules/@m-szopinski/react-native-godot/godot_embed.example.mm ios/godot_embed.mm
+set -e
+SRC="node_modules/@m-szopinski/react-native-godot/web-export"
+DST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/web-export"
+rm -rf "$DST"
+mkdir -p "$DST"
+cp -R "$SRC"/. "$DST"/
+echo "Copied Godot web-export -> $DST"
 ```
-W Xcode: Add Files… -> wybierz `ios/godot_embed.mm` -> zaznacz swój target. Upewnij się, że typ kompilacji to Objective-C++ (rozszerzenie .mm wystarcza).
 
-### 2. Cele implementacji
-Zaimplementujesz funkcje C:
-```
-rn_godot_initialize
-rn_godot_change_scene
-rn_godot_send_event
-rn_godot_get_view
-rn_godot_frame (opcjonalne – pętla)
-```
-One są wołane z warstwy Swift (RealGodotEngine). Parametr `project` pochodzi z prop `projectPath` lub wykrytej .pck; `mainScene` z propa lub auto z `project.godot`.
+## Android – adding assets
 
-### 3. Artefakty runtime
-Masz już prebuilt `GodotRuntimeDist` (statyczne libgodot*.a). Jeśli budujesz własne – podmień pliki przed implementacją (lub później – interfejs C pozostaje identyczny).
+The WebView loads: `file:///android_asset/web-export/index.html`
 
-### 4. Inicjalizacja silnika
-We wnętrzu `rn_godot_initialize`:
-- Załaduj projekt: jeśli argument kończy się `.pck` -> użyj jako pakiet; jeśli katalog -> wskaż folder projektu.
-- Skonfiguruj ścieżki (godot_main/osx / platform init – zależnie od sposobu embedowania).
-- Utwórz obiekt / singleton runtime i utrzymaj w statycznych zmiennych.
+Copy the folder into: `android/app/src/main/assets/web-export`
 
-Pseudo (fragment – zastąp komentarze własnymi wywołaniami Godota):
-```objectivec
-static bool g_initialized = false;
-static PlatformView *g_render_view = nil;
+Gradle copy task (in `app/build.gradle`):
 
-extern "C" void rn_godot_initialize(const char *project_path_or_pck) {
-    if (g_initialized) return;
-    // 1. Parse ścieżkę
-    // 2. Wywołaj bootstrap Godot (np. godot::gdn_interface / internal main init)
-    // 3. Utwórz surface (CAMetalLayer / NSView layer-backed)
-#if TARGET_OS_IOS || TARGET_OS_TV
-    g_render_view = [[UIView alloc] initWithFrame:CGRectZero];
-    g_render_view.layer = [CAMetalLayer layer];
-    ((CAMetalLayer*)g_render_view.layer).pixelFormat = MTLPixelFormatBGRA8Unorm;
-#else
-    g_render_view = [[NSView alloc] initWithFrame:NSZeroRect];
-    g_render_view.wantsLayer = YES;
-    g_render_view.layer = [CAMetalLayer layer];
-#endif
-    // 4. Przekaż layer / drawable do Godot (custom hook)
-    // 5. Start main loop (jeśli Godot oczekuje manualnego loopu – uruchom w tle / rely on rn_godot_frame)
-    g_initialized = true;
+```gradle
+tasks.register("copyGodotWebExport", Copy) {
+    from("$rootDir/../node_modules/@m-szopinski/react-native-godot/web-export")
+    into("$projectDir/src/main/assets/web-export")
 }
+preBuild.dependsOn("copyGodotWebExport")
 ```
 
-### 5. Widok renderera
-`rn_godot_get_view` ma zwracać `UIView*` lub `NSView*` (bridge w Swift zrobi cast). Nigdy nie zwracaj tymczasowego obiektu – przechowuj globalnie. Jeśli Godot tworzy własny NSView/UIView – zwróć go bezpośrednio.
+Ensure `android/app/src/main/assets` exists.
 
-```objectivec
-extern "C" void *rn_godot_get_view(void) {
-    return (__bridge void*)g_render_view;
-}
+## Component API
+
+| Prop    | Type        | Description                                 |
+|---------|-------------|---------------------------------------------|
+| style   | any         | Style passed to container / WebView         |
+| onReady | () => void  | Called after document load                  |
+| source  | any         | Legacy (ignored)                            |
+
+No ref methods – intentionally minimal.
+
+## Migrating from the (deprecated) native version
+
+Remove:
+- `RealGodotEngine`, `godot_embed.mm`, any `rn_godot_*` references.
+- Extra Pod / podspec native bridging code.
+
+Replace old usage:
+```jsx
+<GodotView projectPath="..." mainScene="..."/>
+```
+with:
+```jsx
+<GodotView />
 ```
 
-### 6. Pętla klatek
-Masz dwa warianty:
-- Godot obsługuje własny wątek loopa -> możesz zostawić pusty `rn_godot_frame`.
-- Manualny tick -> implementujesz logikę (process / draw) i RealGodotEngine będzie wywoływał `rn_godot_frame` przez CADisplayLink / Timer.
+Frame loop, symbol dlsym logic and native scene switching are no longer present. All gameplay logic must exist inside the exported Web project.
 
-```objectivec
-extern "C" void rn_godot_frame(void) {
-    // 1. Poll input (opcjonalnie)
-    // 2. Step main loop (np. godot_iterate(delta))
-    // 3. Render (commit do CAMetalLayer)
-}
-```
+## Updating the Godot build
 
-### 7. Zmiana sceny / zdarzenia
-Funkcje:
-```objectivec
-extern "C" void rn_godot_change_scene(const char *res_path) {
-    // Wywołaj API Godot do przełączenia sceny (np. użycie SceneTree)
-}
-extern "C" void rn_godot_send_event(const char *evt) {
-    // Kanał prostych stringów lub JSON -> dispatch do scriptu / autoload singleton
-}
-```
-Warstwa JS:
+CI exports `web-export` from the `godot-project/` directory.  
+To deliver an updated build:
+1. Update assets / scenes inside `godot-project/`.
+2. Bump `version` in `package.json`.
+3. Push to `main` (ensure you have permission for GitHub Packages publishing).
+
+## Using your own project
+
+Fork this repo and:
+1. Replace contents of `godot-project/`.
+2. Commit.
+3. CI regenerates `web-export`.
+
+(If you prefer shipping only your prebuilt export: remove `godot-project` and commit a ready `web-export`.)
+
+## Debug / Troubleshooting
+
+| Issue                                 | Cause / Fix |
+|--------------------------------------|-------------|
+| Black screen (iOS/Android)           | Missing `web-export` in bundle / assets. Re-run copy step (iOS) or Gradle copy (Android). |
+| WebView error page / 404             | Folder not correctly copied. Verify path case-sensitivity. |
+| `Invariant Violation: WebView`       | `react-native-webview` not installed or native build not rebuilt. |
+| High memory usage                    | WASM + PCK size – consider hosting separately or compressing (gzip / brotli) for production web hosting. |
+| Need RN <-> Godot messaging          | Inject JS into Godot export (postMessage to parent) and extend this component to listen (current version keeps scope minimal). |
+
+### White screen deep diagnostics
+
+Enable:
 ```tsx
-ref.current?.setScene("res://scenes/Playground.tscn");
-ref.current?.sendEvent("ping");
+<GodotView debug style={{ flex: 1 }} />
 ```
 
-### 8. Ładowanie projektu i `mainScene`
-- Jeśli `projectPath` wskazuje katalog: Swift spróbuje znaleźć `run/main_scene` w `project.godot`.
-- Jeśli ustawisz `mainScene` w propsie – zostanie wymuszone wywołanie `rn_godot_change_scene`.
-- Jeśli podajesz `.pck` – skonfiguruj loader Godota do korzystania z pakietu (standardowy bootstrap).
+Overlay indicators:
+- CANVAS: appears when a <canvas> element was created / detected.
+- GL: OK / FAIL / ? (no attempt yet). FAIL → WebGL context not created (possibly threads crash, unsupported context attributes or missing canvas).
+- M: Y/N – whether `window.Module` (Emscripten) was observed.
+- Fetch errors / XHR errors: non-200 or network failures for .wasm/.pck/.js assets.
 
-### 9. Częste pułapki
-| Problem | Przyczyna | Jak naprawić |
-|---------|-----------|--------------|
-| `RealGodotEngine aktywny – brak widoku` | `rn_godot_get_view` zwraca nil zanim inicjalizacja skończona | Zainicjalizuj widok natychmiast / opóźnij `initialize` w JS |
-| Brak animacji / brak ruchu | Nie wywołujesz `rn_godot_frame` | Zaimplementuj pętlę albo uruchom natywny wątek loopa |
-| Crash przy cast | Zwrócony pointer nie jest obiektem ObjC | Zwróć prawdziwy UIView/NSView (retain w globalu) |
-| Scena się nie zmienia | `rn_godot_change_scene` nie zaimplementowane / zła ścieżka | Upewnij się, że path zaczyna się od `res://` |
+Extended indicators (added):
+- IDX: HTTP status (or ERR) of an immediate fetch to index.html (helps detect missing / not copied file).
+- Scripts: last loaded script names (verifies main JS actually attached).
+- Body length: approximate length of raw document (if large but no canvas → script malfunction / thread stall).
 
-### 10. Checklista szybkiej walidacji
-- [ ] Xcode widzi `godot_embed.mm` w Compile Sources.
-- [ ] Implementacje `rn_godot_*` bez `static` (musi być export C).
-- [ ] `rn_godot_get_view` zwraca nie-nil po `initialize`.
-- [ ] `CADisplayLink` log “Frame loop aktywna.” pojawia się (jeśli masz `rn_godot_frame`).
-- [ ] Zmiana `mainScene` w JS wywołuje Twoje logi w `rn_godot_change_scene`.
+Additional IDX states (index status):
+| IDX value        | Meaning | Action |
+|------------------|---------|--------|
+| SKIP(file://)     | Running from local file:// (iOS/Android bundle) – fetch intentionally skipped to avoid false errors. | Normal for bundled assets. |
+| FALLBACK(body)    | Fetch failed but document already has HTML content (body length > 50) – probably benign (file:// restriction). | Usually safe; continue checking canvas/GL. |
+| ERR               | Fetch truly failed and no fallback DOM heuristic triggered. | Check that `web-export/index.html` exists in bundle/assets. |
+| HTTP 200 / 404    | Normal HTTP status when not file://. 404 → missing file. | Copy or ensure correct path. |
 
-### Minimalny szkielet końcowy (skrót)
-```objectivec
-extern "C" {
-void rn_godot_initialize(const char *p) { /* bootstrap + tworzenie g_render_view */ }
-void rn_godot_change_scene(const char *scene) { /* SceneTree load */ }
-void rn_godot_send_event(const char *evt) { /* dispatch */ }
-void *rn_godot_get_view(void) { return (__bridge void*)g_render_view; }
-void rn_godot_frame(void) { /* iterate + render */ }
+Additional scenarios:
+| Indicator combo | Meaning | Action |
+|-----------------|---------|--------|
+| IDX:HTTP 200, Scripts empty | index.html loaded but script tag not created / blocked | Inspect index.html modifications; ensure main .js included. |
+| IDX:HTTP 404 | index.html not present in bundle | Re-copy `web-export` into iOS bundle / Android assets. |
+| Scripts list present, NO-CANVAS, GL:? | JS ran but engine didn't create canvas | Check if export uses OffscreenCanvas (unsupported) or threads causing stall. |
+| Body len large, NO-CANVAS, Scripts present | Boot code executed partial / runtime error before canvas | Look at console errors & wasm/script errors. |
+| WASM error + IDX 200 | .wasm file missing/corrupt though index exists | Ensure .wasm copied (size > 0) and path unchanged. |
+
+If using Godot Web export with threads enabled: iOS WKWebView local file context lacks COOP/COEP headers so SharedArrayBuffer is unavailable; engine stalls after bootstrap.
+
+### Extended white screen diagnostics (new)
+
+Additional overlay indicators & logs:
+- Script errors: failing <script> tags (missing/misnamed .js file).
+- WASM errors: WebAssembly.instantiate failures (corrupt / missing .wasm).
+- Auto reload (cache-bust): triggers once if neither Module nor canvas appear in ~3.2s (helps stale cache).
+- GL context fail: now correctly detects 'experimental-webgl'.
+- Pending scripts stall: warns if script tags still not completed after 2s.
+
+Recommended fixes per issue:
+| Indicator / Log | Meaning | Action |
+|-----------------|---------|--------|
+| Script load error | JS file missing / path mismatch | Verify export folder copied intact; preserve filenames (hashes). |
+| WASM error: ... | WebAssembly failed to parse / fetch | Check .wasm present, not zero bytes, correct MIME not required for file:// but file must exist. |
+| Auto reload (cache-bust) | First attempt had no Module & no canvas | Possibly stale cached index / partial copy; after reload still white -> inspect script / wasm errors. |
+| GL context fail | WebGL context not created | Re-export with WebGL2 disabled or reduce features (MSAA off). |
+| SAB unavailable + threads export | Threads blocked in WKWebView | Re-export with threads disabled. |
+
+### Automatic missing assets heuristic & fallback (native)
+
+When `debug` is enabled the component now:
+- Detects `about:blank` loads.
+- Heuristically flags missing `web-export` copy (no Module, no canvas, no scripts).
+- Provides a diagnostic hint block (steps to fix).
+- (Diagnostic only) Can render a fallback inline `index.html` (HTML only) if assets were not bundled, so you see an explicit warning instead of a pure white screen.
+
+Conditions triggering the fallback:
+- No canvas + no Module after onLoadEnd.
+- Index fetch status is `SKIP(file://)` / `ERR` / null.
+- No scripts loaded.
+- `debug` = true.
+
+What it means: You likely did not copy `web-export/` into:
+- iOS: Xcode Target → Copy Bundle Resources.
+- Android: `android/app/src/main/assets/web-export`.
+
+Fix then rebuild.
+
+## Why no native embedding?
+
+Goals:
+- Simplify maintenance / installation.
+- Avoid C++/Objective-C++ toolchain friction.
+- Uniform behavior across platforms via WebView.
+
+If you need full native performance or custom native modules, you’ll need a separate solution embedding a compiled Godot library.
+
+## FAQ
+
+- Do I need `pod install`? Only if adding `react-native-webview` wasn’t done before.
+- Any Swift/ObjC classes required? No.
+- Can I host assets remotely? Yes – fork / modify the component to use `source={{ uri: 'https://...' }}`.
+- Inline base64 mode? Not by default (keeps bundle smaller and debuggable) – possible via custom fork.
+
+## Example helper scripts
+
+Consumer `package.json`:
+
+```json
+{
+  "scripts": {
+    "postinstall": "cp -R node_modules/@m-szopinski/react-native-godot/web-export ios/YourApp/web-export || true"
+  }
 }
 ```
 
-Po wykonaniu powyższych kroków placeholder kolorów znika, a dostajesz właściwy rendering Godota w komponencie `<GodotView/>`.
+(Or rely on Xcode / Gradle tasks above.)
 
-## Props
-
-| Prop | Opis |
-|------|------|
-| projectPath | Katalog projektu lub `.pck` |
-| mainScene | Scena `res://...` |
-| autoStart | Domyślnie true |
-| suppressStubLogs | Niewykorzystywane (stub rzadko używany teraz) |
-| symbolPrefix / symbolPrefixes | Zachowane dla kompatybilności (link-time strong ignoruje) |
-
-## Ref API
-
-```ts
-ref.current?.ensureEngine();
-ref.current?.setScene("res://scenes/TestScene.tscn");
-```
-
-## Diagnostyka
-
-RealGodotEngine ładuje się zawsze – jeśli widok nie pojawia się, popraw implementację `rn_godot_get_view` w `godot_embed.mm`.
+## License
 
 MIT
