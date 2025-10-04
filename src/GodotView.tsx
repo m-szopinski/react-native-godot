@@ -1,6 +1,17 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Platform, View, Text, NativeModules } from 'react-native';
-import { WebView } from 'react-native-webview';
+// + typ tylko (bez WebViewErrorEvent – nie jest eksportowany w zainstalowanej wersji)
+import type { WebViewMessageEvent } from 'react-native-webview';
+
+// REMOVED direct import: import { WebView } from 'react-native-webview';
+// Dynamic (safe) require to avoid crash if dependency missing
+let WebViewComp: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  WebViewComp = require('react-native-webview').WebView;
+} catch {
+  WebViewComp = null;
+}
 
 const INDEX_PATH = 'web-export/index.html';
 
@@ -26,6 +37,9 @@ interface ConsoleEntry {
   t: number;
 }
 
+// Lokalny placeholder dla zdarzenia błędu (minimalne pole potrzebne do odczytu nativeEvent)
+type LocalWebViewErrorEvent = { nativeEvent: any };
+
 export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) => {
   const platformMode = Platform.OS;
   const [loaded, setLoaded] = useState(false);
@@ -43,6 +57,9 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
   const [indexStatus, setIndexStatus] = useState<string | null>(null);
   const [scriptList, setScriptList] = useState<string[]>([]);
   const [bodyDumpInfo, setBodyDumpInfo] = useState<string | null>(null);
+  // NOWE: meta / snippety HTML
+  const [indexHtmlInfo, setIndexHtmlInfo] = useState<{ len: number; snippet: string } | null>(null);
+  const [bodyHtmlInfo, setBodyHtmlInfo] = useState<{ len: number; snippet: string } | null>(null);
   const [errorHint, setErrorHint] = useState<string | null>(null);           // NEW
   const [initialHref, setInitialHref] = useState<string | null>(null);       // NEW
   const reloadTriedRef = useRef(false);
@@ -186,7 +203,6 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
         try {
           var proto = location.protocol;
           if (proto === 'file:') {
-            // Lokalny plik – fetch bywa blokowany / zwraca błąd -> pomijamy
             post({type:'index_fetch_skip'});
           } else {
             var base = (location.href.split('?')[0]||'');
@@ -197,11 +213,17 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
               }
             }).then(txt=>{
               if(!txt) return;
+              // NOWE: wyślij fragment index.html
+              post({
+                type:'index_html',
+                len: txt.length,
+                snippet: txt.slice(0,300)
+                  .replace(/\\s+/g,' ')
+              });
               if(!document.querySelector('canvas')){
                 post({type:'diag_dump', body_len: txt.length });
               }
             }).catch(e=>{
-              // Spróbuj fallback: jeśli dokument już ma treść – oznacz jako fallback
               var bodyLen = (document.documentElement && document.documentElement.innerHTML||'').length;
               if (bodyLen > 50) {
                 post({type:'index_fetch_fallback', body_len: bodyLen, err:''+e});
@@ -215,12 +237,21 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
         }
       }, 200);
 
-      // --- Delayed body / layout dump if still no canvas & no Module ---
+      // --- Delayed body / layout dump + snippet jeśli brak canvas & Module ---
       setTimeout(function(){
         try {
           if(!window.Module && !document.querySelector('canvas')){
             var htmlLen = (document.documentElement && document.documentElement.innerHTML||'').length;
             post({type:'diag_dump', body_len: htmlLen });
+            var bodyEl = document.body;
+            if (bodyEl){
+              var raw = bodyEl.innerHTML || '';
+              post({
+                type:'body_html',
+                len: raw.length,
+                snippet: raw.slice(0,300).replace(/\\s+/g,' ')
+              });
+            }
           }
         } catch(e){}
       }, 2400);
@@ -326,14 +357,23 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
     true;
   `;
 
-  const onMessage = (e: any) => {
-    let data = e?.nativeEvent?.data;
+  // Zmieniono sygnaturę (typ zdarzenia)
+  const onMessage = (e: WebViewMessageEvent) => {
+    let data: any = e?.nativeEvent?.data;
     if (!data) return;
     try { data = JSON.parse(data); } catch { /* ignore */ }
     if (!data || typeof data !== 'object') return;
     if (data.type === 'index_fetch') {
       setIndexStatus('HTTP ' + data.status);
       pushConsole(data.status === 200 ? 'log' : 'warn', 'Index fetch status: ' + data.status);
+    } else if (data.type === 'index_html') {
+      setIndexHtmlInfo({ len: data.len || 0, snippet: data.snippet || '' });
+      pushConsole('log', 'Index HTML len=' + data.len);
+      console.log('[GodotView][index.html][snippet]', data.snippet);
+    } else if (data.type === 'body_html') {
+      setBodyHtmlInfo({ len: data.len || 0, snippet: data.snippet || '' });
+      pushConsole('log', 'Body HTML len=' + data.len);
+      console.log('[GodotView][body.innerHTML][snippet]', data.snippet);
     } else if (data.type === 'index_fetch_skip') {
       setIndexStatus('SKIP(file://)');
       pushConsole('log', 'Index fetch skipped (file://)');
@@ -506,6 +546,23 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
     );
   }
 
+  // If WebView dependency missing – graceful fallback (prevents TypeError)
+  if (!WebViewComp) {
+    return (
+      <View style={[{ flex: 1, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center', padding: 16 }, style]}>
+        <Text style={{ color: '#ffcc66', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+          react-native-webview not available
+        </Text>
+        <Text style={{ color: '#ccc', fontSize: 11, marginTop: 8, textAlign: 'center' }}>
+          Install & rebuild:
+          {'\n'}npm install react-native-webview
+          {'\n'}(iOS) npx pod-install
+          {'\n'}Restart Metro (--reset-cache) and rebuild native app.
+        </Text>
+      </View>
+    );
+  }
+
   // NATIVE
   // iOS: prefer absolutny file:// gdy dostępny
   const uri =
@@ -552,7 +609,7 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
     const html = atob(fallbackIndexHtmlB64!);
     return (
       <View style={{ flex:1, position:'relative' }}>
-        <WebView
+        <WebViewComp
           source={{ html: html.replace('</body>',
             '<div style="position:absolute;top:0;left:0;padding:8px;font:12px monospace;color:#fff;background:#900;">' +
             'Diagnostic fallback index.html only – JS/WASM not loaded. Copy web-export folder into native bundle.' +
@@ -565,6 +622,10 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
               onReady?.();
             }
           }}
+          onError={(e: LocalWebViewErrorEvent) => {
+            const ne = e.nativeEvent;
+            pushConsole('error', 'Fallback load error: ' + (ne?.description || ne?.message));
+          }}
         />
         {Overlay}
       </View>
@@ -573,9 +634,9 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
 
   return (
     <View style={{ flex: 1, position: 'relative' }}>
-      <WebView
-        key={reloadKey}                // <--- zapewnia odświeżenie komponentu
-        source={{ uri: finalUri }}     // <--- używa finalUri z parametrem cb
+      <WebViewComp
+        key={reloadKey}
+        source={{ uri: finalUri }}
         originWhitelist={['*']}
         injectedJavaScriptBeforeContentLoaded={injectedBefore}
         onMessage={onMessage}
@@ -587,8 +648,8 @@ export const GodotView: React.FC<GodotViewProps> = ({ style, onReady, debug }) =
         allowFileAccess
         allowingReadAccessToURL="/"
         style={[{ flex: 1 }, style]}
-        onError={(e) => {
-          const ne = (e as any)?.nativeEvent;
+        onError={(e: LocalWebViewErrorEvent) => {
+          const ne = e.nativeEvent;
           const m = ne?.description || ne?.message || JSON.stringify(ne);
           pushConsole('error', 'Load error: ' + m);
           console.warn('[GodotView] Failed to load index.html', ne);

@@ -149,6 +149,10 @@ Extended indicators (added):
 - IDX: HTTP status (or ERR) of an immediate fetch to index.html (helps detect missing / not copied file).
 - Scripts: last loaded script names (verifies main JS actually attached).
 - Body length: approximate length of raw document (if large but no canvas → script malfunction / thread stall).
+- HTML content introspection: first 300 chars of loaded index.html and current document.body.innerHTML when no canvas/Module (logged as `[GodotView][index.html][snippet]` and `[GodotView][body.innerHTML][snippet]`).
+
+If index snippet is present but body snippet is tiny and no scripts loaded:
+- Main Godot JS file likely not referenced or failed to load.
 
 Additional IDX states (index status):
 | IDX value        | Meaning | Action |
@@ -240,3 +244,13 @@ Consumer `package.json`:
 ## License
 
 MIT
+
+### WebView missing (graceful fallback)
+
+If you forgot to install `react-native-webview`, the component now shows an in‑app instruction panel instead of throwing:
+`TypeError: Cannot read property 'WebView' of undefined`.
+
+Fix:
+1. `npm install react-native-webview`
+2. iOS: `npx pod-install`
+3. Restart Metro (`--reset-cache`) & rebuild native app.

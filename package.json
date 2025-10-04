@@ -1,6 +1,6 @@
 {
   "name": "@m-szopinski/react-native-godot",
-  "version": "0.5.8",
+  "version": "0.5.12",
   "description": "React Native / Web wrapper dla webowego buildu Godot (bez natywnego runtime).",
   "type": "module",
   "main": "lib/index.js",
