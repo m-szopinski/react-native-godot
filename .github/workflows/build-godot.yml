@@ -13,7 +13,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      # NOTE: Native embed files (godot_embed.example.mm / Swift) removed – pure Web export.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
